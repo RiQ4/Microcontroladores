@@ -1,0 +1,11 @@
+C:\Users\HP\Documents\ITLA\Tareas\PPM\Repositorio\EricPina_2023-0042\EricPina_Calculadora\EricPina_Calculadora\bin\Debug\EricPina_Calculadora.exe.config
+C:\Users\HP\Documents\ITLA\Tareas\PPM\Repositorio\EricPina_2023-0042\EricPina_Calculadora\EricPina_Calculadora\bin\Debug\EricPina_Calculadora.exe
+C:\Users\HP\Documents\ITLA\Tareas\PPM\Repositorio\EricPina_2023-0042\EricPina_Calculadora\EricPina_Calculadora\bin\Debug\EricPina_Calculadora.pdb
+C:\Users\HP\Documents\ITLA\Tareas\PPM\Repositorio\EricPina_2023-0042\EricPina_Calculadora\EricPina_Calculadora\obj\Debug\EricPina_Calculadora.csproj.AssemblyReference.cache
+C:\Users\HP\Documents\ITLA\Tareas\PPM\Repositorio\EricPina_2023-0042\EricPina_Calculadora\EricPina_Calculadora\obj\Debug\EricPina_Calculadora.csproj.SuggestedBindingRedirects.cache
+C:\Users\HP\Documents\ITLA\Tareas\PPM\Repositorio\EricPina_2023-0042\EricPina_Calculadora\EricPina_Calculadora\obj\Debug\EricPina_Calculadora.Form1.resources
+C:\Users\HP\Documents\ITLA\Tareas\PPM\Repositorio\EricPina_2023-0042\EricPina_Calculadora\EricPina_Calculadora\obj\Debug\EricPina_Calculadora.Properties.Resources.resources
+C:\Users\HP\Documents\ITLA\Tareas\PPM\Repositorio\EricPina_2023-0042\EricPina_Calculadora\EricPina_Calculadora\obj\Debug\EricPina_Calculadora.csproj.GenerateResource.cache
+C:\Users\HP\Documents\ITLA\Tareas\PPM\Repositorio\EricPina_2023-0042\EricPina_Calculadora\EricPina_Calculadora\obj\Debug\EricPina_Calculadora.csproj.CoreCompileInputs.cache
+C:\Users\HP\Documents\ITLA\Tareas\PPM\Repositorio\EricPina_2023-0042\EricPina_Calculadora\EricPina_Calculadora\obj\Debug\EricPina_Calculadora.exe
+C:\Users\HP\Documents\ITLA\Tareas\PPM\Repositorio\EricPina_2023-0042\EricPina_Calculadora\EricPina_Calculadora\obj\Debug\EricPina_Calculadora.pdb
