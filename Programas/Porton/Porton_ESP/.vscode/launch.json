@@ -1,0 +1,29 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "espidf",
+      "name": "Launch JTAG",
+      "request": "launch",
+      "target": "esp32s3",               // Reemplaza con "esp32s2", "esp32c3" u otro, si es necesario
+      "gdbpath": "${config:idf.customAdapter.gdbPath}", 
+      "debugAdapter": "esp-prog",       // Cambia a tu adaptador JTAG (por ejemplo, "esp-prog", "ft2232")
+      "interface": "jtag",
+      "toolchainPrefix": "xtensa-esp32-elf-", // Cambia el prefijo según tu chip
+      "env": {
+        "IDF_PATH": "${config:idf.espIdfPath}"
+      },
+      "openOcdConfig": [
+        "interface/ftdi/esp32_devkitj_v1.cfg", // Reemplaza según tu adaptador
+        "board/esp32s3.cfg"               // O según tu modelo de placa
+      ],
+      "svdFile": "${workspaceFolder}/esp32.svd", // Opcional, para obtener una vista detallada de registros
+      "runToMain": true,
+      "initGdbCommands": [
+        "target extended-remote :3333",  // Puerto de depuración JTAG
+        "monitor reset halt",
+        "thb app_main"                   // Punto de entrada en app_main
+      ]
+    }
+  ]
+}
