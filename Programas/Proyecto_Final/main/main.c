@@ -16,6 +16,9 @@
 #include <freertos/task.h>
 #include <freertos/event_groups.h>
 
+#include "lwip/err.h" //light weight ip packets error handling
+#include "lwip/sys.h" //system applications for light weight ip apps
+
 // #define LED 13
 // #define PB
 
@@ -33,6 +36,13 @@ static const char *topic = "micro/esp32s3/pf";
 
 bool wifi_connected = false; // ESTADO WIFI
 bool mqtt_connected = false; // ESTADO MQTT
+
+static void log_error_if_nonzero(const char *message, int error_code)
+{
+    if (error_code != 0) {
+        ESP_LOGE(TAG, "Last error %s: 0x%x", message, error_code);
+    }
+}
 
 struct IO_DATA
 {
@@ -138,7 +148,7 @@ static void mqtt5_event_handler(void *handler_args, esp_event_base_t base, int32
         ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
         mqtt_connected = true;
         // Subscripcion
-        msg_id = esp_mqtt_client_subscribe(client, topic, 1);
+        //msg_id = esp_mqtt_client_subscribe(client, topic, 1);
 
         break;
     case MQTT_EVENT_DISCONNECTED:
@@ -148,7 +158,7 @@ static void mqtt5_event_handler(void *handler_args, esp_event_base_t base, int32
     case MQTT_EVENT_SUBSCRIBED:
         ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);
         ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
-        msg_id = esp_mqtt_client_publish(client, topic, "entro eri", sizeof("entro eri"), 1, 1);
+        //msg_id = esp_mqtt_client_publish(client, topic, "entro eri", sizeof("entro eri"), 1, 1);
         break;
     case MQTT_EVENT_UNSUBSCRIBED:
         ESP_LOGI(TAG, "MQTT_EVENT_UNSUBSCRIBED, msg_id=%d", event->msg_id);
@@ -167,9 +177,9 @@ static void mqtt5_event_handler(void *handler_args, esp_event_base_t base, int32
         ESP_LOGI(TAG, "MQTT5 return code is %d", event->error_handle->connect_return_code);
         if (event->error_handle->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT)
         {
-            //log_error_if_nonzero("reported from esp-tls", event->error_handle->esp_tls_last_esp_err);
-            //log_error_if_nonzero("reported from tls stack", event->error_handle->esp_tls_stack_err);
-            //log_error_if_nonzero("captured as transport's socket errno", event->error_handle->esp_transport_sock_errno);
+            log_error_if_nonzero("reported from esp-tls", event->error_handle->esp_tls_last_esp_err);
+            log_error_if_nonzero("reported from tls stack", event->error_handle->esp_tls_stack_err);
+            log_error_if_nonzero("captured as transport's socket errno", event->error_handle->esp_transport_sock_errno);
             ESP_LOGI(TAG, "Last errno string (%s)", strerror(event->error_handle->esp_transport_sock_errno));
         }
         break;
@@ -210,30 +220,25 @@ static void wifi_event_handler(void *event_handler_arg, esp_event_base_t event_b
 }
 
 /*-------- WIFI INIT CONFIG --------*/
-void wifi_connection (void) {
-    ESP_ERROR_CHECK(esp_netif_init());                      //Init interfaz de red
-    ESP_ERROR_CHECK(esp_event_loop_create_default());  
+void wifi_init(void)
+{
+    // ESP_ERROR_CHECK(esp_netif_init());                      //Init interfaz de red
+    // ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    esp_netif_inherent_config_t esp_netif_config = ESP_NETIF_INHERENT_DEFAULT_WIFI_STA();
-    
-    wifi_init_config_t wifi_init = WIFI_INIT_CONFIG_DEFAULT();  //Config INIT por defecto
+    wifi_init_config_t wifi_init = WIFI_INIT_CONFIG_DEFAULT(); // Config INIT por defecto
     esp_wifi_init(&wifi_init);
-    esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler, NULL);     //Registro de función de evento wifi
-    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event_handler, NULL);    //Event handler ip event
+    esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler, NULL); // Registro de función de evento wifi
 
     wifi_config_t wifi_config = {
         .sta = {
             .ssid = "",
-            .password = ""
-        }
-    };
-    strcpy((char*)wifi_config.sta.ssid, SSID);
-    strcpy((char*)wifi_config.sta.password, PASS);
-    esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config); //Config STA
-    esp_wifi_start();                                   //Iniciar WIFI
-    esp_wifi_set_mode(WIFI_MODE_STA);                   //Seleccion STA
-    esp_wifi_connect();                                 //Conectar
+            .password = ""}};
+    strcpy((char *)wifi_config.sta.ssid, SSID);
+    strcpy((char *)wifi_config.sta.password, PASS);
 
+    esp_wifi_set_mode(WIFI_MODE_STA);                   // Seleccion STA
+    esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config); // Config STA
+    esp_wifi_start();                                   // Iniciar WIFI
 }
 
 /*-------- MQTT CLIENT CONFIG --------*/
@@ -254,8 +259,6 @@ static void mqtt5_app_start(void)
     esp_mqtt_client_start(client);
 }
 
-
-
 void app_main(void)
 {
     esp_err_t ret = nvs_flash_init();
@@ -265,11 +268,21 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    wifi_connection();
-    while (mqtt_connected != true) {
-    if (wifi_connected == true) {
-        mqtt5_app_start();
+    wifi_init();
+
+    while (wifi_connected != true)
+    {
+        esp_wifi_connect();                    // Conectar
+        vTaskDelay(5000 / portTICK_PERIOD_MS); // Delay para darle chance
     }
+
+    ESP_ERROR_CHECK(esp_netif_init()); // Init interfaz de red
+
+    while (mqtt_connected != true)
+    {
+        mqtt5_app_start();
+        vTaskDelay(5000 / portTICK_PERIOD_MS); // Delay para darle chance
     }
 }
