@@ -16,12 +16,15 @@
 #include <freertos/task.h>
 #include <freertos/event_groups.h>
 
-#include "lwip/err.h" //light weight ip packets error handling
-#include "lwip/sys.h" //system applications for light weight ip apps
+#include "lwip/err.h"
+#include "lwip/sys.h"
 
 #include <esp_task_wdt.h>
 
-// #define LED 13
+#include "driver/gpio.h"
+
+#define LED_PIN GPIO_NUM_21
+#define GPIO_OUTPUT_PIN_SEL (1ULL<<LED_PIN)
 
 #define OFF 0      // ESTADO APAGADO
 #define MEDIUM 1   // ESTADO PARPADEO 0.5s
@@ -29,7 +32,7 @@
 #define SLOW 3     // ESTADO PARPADEO 1s
 #define VARIABLE 4 // ESTADO PARPADEO VARIABLE
 
-#define SSID "CLAROA084_Ext"
+#define SSID "CLAROA084"
 #define PASS "20212617"
 #define MAX_RETRY 50 // REINTENTOS MAX.
 static EventGroupHandle_t s_wifi_event_group;
@@ -42,13 +45,13 @@ static const char *TAG = "Proyecto Final";
 static const char *topic = "micro/esp32s3/pf";
 
 bool mqtt_connected = false;            // ESTADO MQTT
-esp_mqtt_client_handle_t client = NULL; //CLIENTE MQTT
+esp_mqtt_client_handle_t client = NULL; // CLIENTE MQTT
 
-static uint8_t q_pb_length = 5;     //Long. Cola Push But.
-static QueueHandle_t q_pb;          //Handle Cola Push But.
+static uint8_t q_pb_length = 5; // Long. Cola Push But.
+static QueueHandle_t q_pb;      // Handle Cola Push But.
 
-static uint8_t q_st_length = 5;     //Long. Cola Estado.
-static QueueHandle_t q_st;          //Handle Cola Estado.
+static uint8_t q_st_length = 5; // Long. Cola Estado.
+static QueueHandle_t q_st;      // Handle Cola Estado.
 
 /*-------- FSM DATA --------*/
 struct IO_DATA
@@ -383,7 +386,7 @@ void output(void)
     bool msg = false;
     uint8_t state = OFF;
     char buffer[50];
-    
+
     xQueueReset(q_st);
     xQueueReset(q_pb);
 
@@ -422,35 +425,56 @@ void output(void)
     }
 }
 
-void led(void) {
+void led(void)
+{
+
+    uint16_t var_time = 100;
+
     while (1)
+    {
         if (curr_state == OFF)
         {
-            //set pin high
+            gpio_set_level(LED_PIN, 1);
+            vTaskDelay(10 / portTICK_PERIOD_MS);
         }
         else if (curr_state == MEDIUM)
         {
-            //Toggle pin
-            //Wait 500ms
+            gpio_set_level(LED_PIN, (gpio_get_level(LED_PIN) == 1 ? 0 : 1));
+            vTaskDelay(500 / portTICK_PERIOD_MS);
         }
         else if (curr_state == FAST)
         {
-            //Toggle pin
-            //Wait 100ms
+            gpio_set_level(LED_PIN, (gpio_get_level(LED_PIN) == 1 ? 0 : 1));
+            vTaskDelay(100 / portTICK_PERIOD_MS);
         }
         else if (curr_state == SLOW)
         {
-            //Toggle pin
-            //Wait 1000ms
+            gpio_set_level(LED_PIN, (gpio_get_level(LED_PIN) == 1 ? 0 : 1));
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
         }
         else if (curr_state == VARIABLE)
         {
-            //set wait time
-            //Toggle pin
-            //increment wait time
-            //wait
+            gpio_set_level(LED_PIN, (gpio_get_level(LED_PIN) == 1 ? 0 : 1));
+            vTaskDelay(var_time / portTICK_PERIOD_MS);
+
+            if (var_time < 1000)
+            {
+                var_time += 100;
+            }
+            else
+            {
+                var_time = 100;
+            }
         }
+        else {
+            gpio_set_level(LED_PIN, 0);
+            vTaskDelay(2500/portTICK_PERIOD_MS);
+            gpio_set_level(LED_PIN, 1);
+            vTaskDelay(2500/portTICK_PERIOD_MS);
+        }
+    }
 }
+
 void app_main(void)
 {
     esp_err_t ret = nvs_flash_init();
@@ -477,6 +501,24 @@ void app_main(void)
     };
     esp_err_t err = esp_task_wdt_reconfigure(&config);
 
+    gpio_config_t pin_conf = {};
+    //disable interrupt
+    pin_conf.intr_type = GPIO_INTR_DISABLE;
+    //set as output mode
+    pin_conf.mode = GPIO_MODE_OUTPUT;
+    //bit mask of the pins that you want to set,e.g.GPIO18/19
+    pin_conf.pin_bit_mask = GPIO_OUTPUT_PIN_SEL;
+    //disable pull-down mode
+    pin_conf.pull_down_en = 0;
+    //disable pull-up mode
+    pin_conf.pull_up_en = 0;
+    //configure GPIO with the given settings
+    gpio_config(&pin_conf);
+
+    gpio_set_level(LED_PIN, 0);
+    vTaskDelay(1000/portTICK_PERIOD_MS);
+    gpio_set_level(LED_PIN, 1);
+
     while (mqtt_connected == false)
     {
         vTaskDelay(500 / portTICK_PERIOD_MS);
@@ -487,7 +529,5 @@ void app_main(void)
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     xTaskCreate(input, "Entrada", 4096, NULL, 1, NULL);
     xTaskCreate(output, "Salida", 4096, NULL, 1, NULL);
-
-    // xTaskCreate(state, "Estado", 2048, NULL, 1, NULL);
-    // vTaskDelete(NULL);
+    xTaskCreate(led, "LED", 2048, NULL, 1, NULL);
 }
