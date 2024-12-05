@@ -29,27 +29,31 @@
 #define SLOW 3     // ESTADO PARPADEO 1s
 #define VARIABLE 4 // ESTADO PARPADEO VARIABLE
 
-#define SSID "CLAROA084"
+#define SSID "CLAROA084_Ext"
 #define PASS "20212617"
 #define MAX_RETRY 50 // REINTENTOS MAX.
 static EventGroupHandle_t s_wifi_event_group;
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT BIT1
+static int retry_num = 0;    // REINTENTOS WIFI
+bool wifi_connected = false; // ESTADO WIFI
 
 static const char *TAG = "Proyecto Final";
 static const char *topic = "micro/esp32s3/pf";
 
-static int retry_num = 0;    // REINTENTOS WIFI
-bool wifi_connected = false; // ESTADO WIFI
-bool mqtt_connected = false; // ESTADO MQTT
+bool mqtt_connected = false;            // ESTADO MQTT
+esp_mqtt_client_handle_t client = NULL; //CLIENTE MQTT
 
-static portMUX_TYPE key = portMUX_INITIALIZER_UNLOCKED;
+static uint8_t q_pb_length = 5;     //Long. Cola Push But.
+static QueueHandle_t q_pb;          //Handle Cola Push But.
+
+static uint8_t q_st_length = 5;     //Long. Cola Estado.
+static QueueHandle_t q_st;          //Handle Cola Estado.
 
 /*-------- FSM DATA --------*/
 struct IO_DATA
 {
     bool pb;
-    bool led;
 
 } io_data;
 
@@ -67,11 +71,14 @@ int offFunc(void)
     {
         if (io_data.pb == true)
         {
+            if (xQueueSend(q_pb, (void *)&io_data.pb, 10) != pdTRUE)
+            {
+                ESP_LOGI(TAG, "q_pb FULL");
+            }
+            xQueueSend(q_st, (void *)&curr_state, 10);
             io_data.pb = false;
             return MEDIUM;
         }
-        else
-            return curr_state;
     }
 }
 
@@ -84,11 +91,14 @@ int mediumFunc(void)
     {
         if (io_data.pb == true)
         {
+            if (xQueueSend(q_pb, (void *)&io_data.pb, 10) != pdTRUE)
+            {
+                ESP_LOGI(TAG, "q_pb FULL");
+            }
             io_data.pb = false;
+            xQueueSend(q_st, (void *)&curr_state, 10);
             return FAST;
         }
-        else
-            return curr_state;
     }
 }
 
@@ -101,11 +111,14 @@ int fastFunc(void)
     {
         if (io_data.pb == true)
         {
+            if (xQueueSend(q_pb, (void *)&io_data.pb, 10) != pdTRUE)
+            {
+                ESP_LOGI(TAG, "q_pb FULL");
+            }
             io_data.pb = false;
+            xQueueSend(q_st, (void *)&curr_state, 10);
             return SLOW;
         }
-        else
-            return curr_state;
     }
 }
 
@@ -118,11 +131,16 @@ int slowFunc(void)
     {
         if (io_data.pb == true)
         {
+
+            if (xQueueSend(q_pb, (void *)&io_data.pb, 10) != pdTRUE)
+            {
+                ESP_LOGI(TAG, "q_pb FULL");
+            }
+
             io_data.pb = false;
+            xQueueSend(q_st, (void *)&curr_state, 10);
             return VARIABLE;
         }
-        else
-            return curr_state;
     }
 }
 
@@ -135,11 +153,14 @@ int varFunc(void)
     {
         if (io_data.pb == true)
         {
+            if (xQueueSend(q_pb, (void *)&io_data.pb, 10) != pdTRUE)
+            {
+                ESP_LOGI(TAG, "q_pb FULL");
+            }
             io_data.pb = false;
+            xQueueSend(q_st, (void *)&curr_state, 10);
             return OFF;
         }
-        else
-            return curr_state;
     }
 }
 
@@ -159,7 +180,8 @@ static void mqtt5_event_handler(void *handler_args, esp_event_base_t base, int32
         ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
         mqtt_connected = true;
         // Subscripcion
-        msg_id = esp_mqtt_client_subscribe(client, topic, 2);
+        esp_mqtt_client_subscribe(client, "micro/esp32s3/connection", 2);
+        esp_mqtt_client_subscribe(client, topic, 2);
 
         break;
     case MQTT_EVENT_DISCONNECTED:
@@ -169,7 +191,8 @@ static void mqtt5_event_handler(void *handler_args, esp_event_base_t base, int32
     case MQTT_EVENT_SUBSCRIBED:
         ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);
         ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
-        // msg_id = esp_mqtt_client_publish(client, topic, "entro eri", sizeof("entro eri"), 0, 0);
+        esp_mqtt_client_publish(client, "micro/esp32s3/connection", "Connected", 0, 0, 0);
+
         break;
     case MQTT_EVENT_UNSUBSCRIBED:
         ESP_LOGI(TAG, "MQTT_EVENT_UNSUBSCRIBED, msg_id=%d", event->msg_id);
@@ -177,16 +200,17 @@ static void mqtt5_event_handler(void *handler_args, esp_event_base_t base, int32
         break;
     case MQTT_EVENT_PUBLISHED:
         ESP_LOGI(TAG, "MQTT_EVENT_PUBLISHED, msg_id=%d", event->msg_id);
-        ESP_LOGI(TAG, "Published @ micro.");
         break;
     case MQTT_EVENT_DATA:
         ESP_LOGI(TAG, "MQTT_EVENT_DATA");
 
+        char temp[10];
+        strncpy(temp, event->data, event->data_len);
+
         if (strcmp(event->topic, topic) == 0)
         {
             ESP_LOGW(TAG, "TOPIC CORRECTO");
-            printf(event->data[0]);
-            if (strcmp(event->data[0], "1") == 0)
+            if (strcmp(temp, "1") == 0)
             {
                 ESP_LOGI(TAG, "Proximo Estado");
                 io_data.pb = true;
@@ -304,7 +328,6 @@ void wifi_init(void)
 }
 
 /*-------- MQTT CLIENT CONFIG --------*/
-esp_mqtt_client_handle_t client = NULL;
 static void mqtt5_app_start(void)
 {
     ESP_LOGI(TAG, "STARTING MQTT");
@@ -327,63 +350,107 @@ void input(void)
     {
         if (next_state == OFF)
         {
+            // ESP_LOGW(TAG, "OFF");
             next_state = offFunc();
         }
-        else if (next_state == MEDIUM)
+        if (next_state == MEDIUM)
         {
+            // ESP_LOGW(TAG, "MED");
             next_state = mediumFunc();
         }
-        else if (next_state == FAST)
+        if (next_state == FAST)
         {
+            // ESP_LOGW(TAG, "FAST");
             next_state = fastFunc();
         }
-        else if (next_state == SLOW)
+        if (next_state == SLOW)
         {
+            // ESP_LOGW(TAG, "SLOW");
             next_state = slowFunc();
         }
-        else if (next_state == VARIABLE)
+        if (next_state == VARIABLE)
         {
+            // ESP_LOGW(TAG, "VAR");
             next_state = varFunc();
         }
+        // printf("Hola: %d", curr_state);
+        vTaskDelay(10 / portTICK_PERIOD_MS);
     }
-    vTaskDelay(10/portTICK_PERIOD_MS);
 }
 
 void output(void)
 {
+    bool msg = false;
+    uint8_t state = OFF;
     char buffer[50];
+    
+    xQueueReset(q_st);
+    xQueueReset(q_pb);
+
     while (1)
     {
-        if (next_state != curr_state)
+        xQueueReceive(q_pb, (void *)&msg, 0);
+
+        if (msg == true)
         {
-            if (curr_state == OFF)
-            {
-                sprintf(buffer, "Cambiando al estado: %s\n", "OFF");
-            }
-            else if (curr_state == SLOW)
-            {
-                sprintf(buffer, "Cambiando al estado: %s\n", "SLOW");
-            }
-            else if (curr_state == MEDIUM)
+            xQueueReceive(q_st, (void *)&state, 0);
+            ESP_LOGI(TAG, "STATE CHANGE");
+            msg = false;
+            if (state == OFF)
             {
                 sprintf(buffer, "Cambiando al estado: %s\n", "MEDIUM");
             }
-            else if (curr_state == FAST)
-            {
-                sprintf(buffer, "Cambiando al estado: %s\n", "FAST");
-            }
-            else if (curr_state == VARIABLE)
+            else if (state == SLOW)
             {
                 sprintf(buffer, "Cambiando al estado: %s\n", "VARIABLE");
             }
-            taskENTER_CRITICAL(&key);
+            else if (state == MEDIUM)
+            {
+                sprintf(buffer, "Cambiando al estado: %s\n", "FAST");
+            }
+            else if (state == FAST)
+            {
+                sprintf(buffer, "Cambiando al estado: %s\n", "SLOW");
+            }
+            else if (state == VARIABLE)
+            {
+                sprintf(buffer, "Cambiando al estado: %s\n", "OFF");
+            }
             printf(buffer);
-            taskEXIT_CRITICAL(&key);
         }
-        vTaskDelay(10/portTICK_PERIOD_MS);
+        vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 }
 
+void led(void) {
+    while (1)
+        if (curr_state == OFF)
+        {
+            //set pin high
+        }
+        else if (curr_state == MEDIUM)
+        {
+            //Toggle pin
+            //Wait 500ms
+        }
+        else if (curr_state == FAST)
+        {
+            //Toggle pin
+            //Wait 100ms
+        }
+        else if (curr_state == SLOW)
+        {
+            //Toggle pin
+            //Wait 1000ms
+        }
+        else if (curr_state == VARIABLE)
+        {
+            //set wait time
+            //Toggle pin
+            //increment wait time
+            //wait
+        }
+}
 void app_main(void)
 {
     esp_err_t ret = nvs_flash_init();
@@ -398,13 +465,10 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_netif_init());
 
     wifi_init();
-
+    vTaskDelay(5000 / portTICK_PERIOD_MS);
     // chequear esto
-    while (mqtt_connected != true)
-    {
-        mqtt5_app_start();
-        vTaskDelay(5000 / portTICK_PERIOD_MS); // Delay para darle chance
-    }
+    mqtt5_app_start();
+    vTaskDelay(5000 / portTICK_PERIOD_MS);
 
     esp_task_wdt_config_t config = {
         .timeout_ms = 60000,
@@ -412,6 +476,18 @@ void app_main(void)
         .idle_core_mask = 0, // i.e. do not watch any idle task
     };
     esp_err_t err = esp_task_wdt_reconfigure(&config);
-    xTaskCreate(input, "Entrada", 1024, NULL, 1, NULL);
-    xTaskCreate(output, "Salida", 1024, NULL, 1, NULL);
+
+    while (mqtt_connected == false)
+    {
+        vTaskDelay(500 / portTICK_PERIOD_MS);
+    }
+
+    q_pb = xQueueCreate(q_pb_length, sizeof(bool));
+    q_st = xQueueCreate(q_st_length, sizeof(uint8_t));
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    xTaskCreate(input, "Entrada", 4096, NULL, 1, NULL);
+    xTaskCreate(output, "Salida", 4096, NULL, 1, NULL);
+
+    // xTaskCreate(state, "Estado", 2048, NULL, 1, NULL);
+    // vTaskDelete(NULL);
 }
