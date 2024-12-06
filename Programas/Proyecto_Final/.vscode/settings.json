@@ -16,6 +16,7 @@
     "idf.toolsPathWin": "C:\\Users\\HP\\.espressif",
     "idf.flashType": "UART",
     "files.associations": {
-        "ratio": "c"
+        "ratio": "c",
+        "timers.h": "c"
     }
 }

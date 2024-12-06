@@ -15,6 +15,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/event_groups.h>
+#include <freertos/timers.h>
 
 #include "lwip/err.h"
 #include "lwip/sys.h"
@@ -22,9 +23,11 @@
 #include <esp_task_wdt.h>
 
 #include "driver/gpio.h"
+#include "portmacro.h"
+#include "esp_mac.h"
 
 #define LED_PIN GPIO_NUM_21
-#define GPIO_OUTPUT_PIN_SEL (1ULL<<LED_PIN)
+#define GPIO_OUTPUT_PIN_SEL (1ULL << LED_PIN)
 
 #define OFF 0      // ESTADO APAGADO
 #define MEDIUM 1   // ESTADO PARPADEO 0.5s
@@ -32,8 +35,8 @@
 #define SLOW 3     // ESTADO PARPADEO 1s
 #define VARIABLE 4 // ESTADO PARPADEO VARIABLE
 
-#define SSID "CLAROA084"
-#define PASS "20212617"
+#define SSID "Galaxy A13 1183"
+#define PASS "rikitikifriki"
 #define MAX_RETRY 50 // REINTENTOS MAX.
 static EventGroupHandle_t s_wifi_event_group;
 #define WIFI_CONNECTED_BIT BIT0
@@ -50,36 +53,75 @@ esp_mqtt_client_handle_t client = NULL; // CLIENTE MQTT
 static uint8_t q_pb_length = 5; // Long. Cola Push But.
 static QueueHandle_t q_pb;      // Handle Cola Push But.
 
-static uint8_t q_st_length = 5; // Long. Cola Estado.
-static QueueHandle_t q_st;      // Handle Cola Estado.
+TimerHandle_t tim_100ms; // TIMER HANDLE
+uint16_t time_set = 100; // TIMER DEFAULT SET
 
 /*-------- FSM DATA --------*/
 struct IO_DATA
 {
     bool pb;
-
+    bool change;
+    uint8_t prev_state;
+    uint8_t curr_state;
+    uint8_t next_state;
+    uint8_t cnt_mid;
+    uint8_t cnt_fast;
+    uint8_t cnt_slow;
+    uint8_t cnt_var;
 } io_data;
 
-uint8_t prev_state = OFF;
-uint8_t curr_state = OFF;
-uint8_t next_state = OFF;
+/*-------- TIMER CALLBACK FUNCTION --------*/
+void TimerCallBack(TimerHandle_t xTimer)
+{
+    io_data.cnt_fast++;
+    io_data.cnt_mid++;
+    io_data.cnt_slow++;
+    io_data.cnt_var++;
+
+    if (io_data.curr_state == OFF)
+        {
+            gpio_set_level(LED_PIN, 1);
+        }
+        else if (io_data.curr_state == MEDIUM)
+        {
+            
+            gpio_set_level(LED_PIN, !gpio_get_level(LED_PIN));
+        }
+        else if (io_data.curr_state == FAST)
+        {
+            gpio_set_level(LED_PIN, !gpio_get_level(LED_PIN));
+        }
+        else if (io_data.curr_state == SLOW)
+        {
+            gpio_set_level(LED_PIN, !gpio_get_level(LED_PIN));
+        }
+        else if (io_data.curr_state == VARIABLE)
+        {
+            gpio_set_level(LED_PIN, !gpio_get_level(LED_PIN));
+
+            if (var_time < 1000)
+            {
+                var_time += 100;
+            }
+            else
+            {
+                var_time = 100;
+            }
+        }
+}
 
 /*-------- FSM FUNCTIONS --------*/
 int offFunc(void)
 {
-    prev_state = OFF;
-    curr_state = OFF;
+    io_data.prev_state = OFF;
+    io_data.curr_state = OFF;
 
     while (1)
     {
         if (io_data.pb == true)
         {
-            if (xQueueSend(q_pb, (void *)&io_data.pb, 10) != pdTRUE)
-            {
-                ESP_LOGI(TAG, "q_pb FULL");
-            }
-            xQueueSend(q_st, (void *)&curr_state, 10);
             io_data.pb = false;
+            io_data.change = true;
             return MEDIUM;
         }
     }
@@ -87,19 +129,15 @@ int offFunc(void)
 
 int mediumFunc(void)
 {
-    prev_state = curr_state;
-    curr_state = MEDIUM;
+    io_data.prev_state = io_data.curr_state;
+    io_data.curr_state = MEDIUM;
 
     while (1)
     {
         if (io_data.pb == true)
         {
-            if (xQueueSend(q_pb, (void *)&io_data.pb, 10) != pdTRUE)
-            {
-                ESP_LOGI(TAG, "q_pb FULL");
-            }
             io_data.pb = false;
-            xQueueSend(q_st, (void *)&curr_state, 10);
+            io_data.change = true;
             return FAST;
         }
     }
@@ -107,19 +145,15 @@ int mediumFunc(void)
 
 int fastFunc(void)
 {
-    prev_state = curr_state;
-    curr_state = FAST;
+    io_data.prev_state = io_data.curr_state;
+    io_data.curr_state = FAST;
 
     while (1)
     {
         if (io_data.pb == true)
         {
-            if (xQueueSend(q_pb, (void *)&io_data.pb, 10) != pdTRUE)
-            {
-                ESP_LOGI(TAG, "q_pb FULL");
-            }
             io_data.pb = false;
-            xQueueSend(q_st, (void *)&curr_state, 10);
+            io_data.change = true;
             return SLOW;
         }
     }
@@ -127,21 +161,15 @@ int fastFunc(void)
 
 int slowFunc(void)
 {
-    prev_state = curr_state;
-    curr_state = SLOW;
+    io_data.prev_state = io_data.curr_state;
+    io_data.curr_state = SLOW;
 
     while (1)
     {
         if (io_data.pb == true)
         {
-
-            if (xQueueSend(q_pb, (void *)&io_data.pb, 10) != pdTRUE)
-            {
-                ESP_LOGI(TAG, "q_pb FULL");
-            }
-
             io_data.pb = false;
-            xQueueSend(q_st, (void *)&curr_state, 10);
+            io_data.change = true;
             return VARIABLE;
         }
     }
@@ -149,19 +177,15 @@ int slowFunc(void)
 
 int varFunc(void)
 {
-    prev_state = curr_state;
-    curr_state = VARIABLE;
+    io_data.prev_state = io_data.curr_state;
+    io_data.curr_state = VARIABLE;
 
     while (1)
     {
         if (io_data.pb == true)
         {
-            if (xQueueSend(q_pb, (void *)&io_data.pb, 10) != pdTRUE)
-            {
-                ESP_LOGI(TAG, "q_pb FULL");
-            }
             io_data.pb = false;
-            xQueueSend(q_st, (void *)&curr_state, 10);
+            io_data.change = true;
             return OFF;
         }
     }
@@ -215,7 +239,6 @@ static void mqtt5_event_handler(void *handler_args, esp_event_base_t base, int32
             ESP_LOGW(TAG, "TOPIC CORRECTO");
             if (strcmp(temp, "1") == 0)
             {
-                ESP_LOGI(TAG, "Proximo Estado");
                 io_data.pb = true;
             }
         }
@@ -335,7 +358,7 @@ static void mqtt5_app_start(void)
 {
     ESP_LOGI(TAG, "STARTING MQTT");
     esp_mqtt_client_config_t mqttConfig = {
-        .broker.address.uri = "mqtt://test.mosquitto.org:1883",
+        .broker.address.uri = "mqtt://broker.hivemq.com:1883",
         .session.protocol_ver = MQTT_PROTOCOL_V_5,
         .network.disable_auto_reconnect = false,
         .credentials.username = "",
@@ -351,111 +374,95 @@ void input(void)
 {
     while (1)
     {
-        if (next_state == OFF)
+        if (io_data.next_state == OFF)
         {
             // ESP_LOGW(TAG, "OFF");
-            next_state = offFunc();
+            io_data.next_state = offFunc();
         }
-        if (next_state == MEDIUM)
+        if (io_data.next_state == MEDIUM)
         {
             // ESP_LOGW(TAG, "MED");
-            next_state = mediumFunc();
+            io_data.next_state = mediumFunc();
         }
-        if (next_state == FAST)
+        if (io_data.next_state == FAST)
         {
             // ESP_LOGW(TAG, "FAST");
-            next_state = fastFunc();
+            io_data.next_state = fastFunc();
         }
-        if (next_state == SLOW)
+        if (io_data.next_state == SLOW)
         {
             // ESP_LOGW(TAG, "SLOW");
-            next_state = slowFunc();
+            io_data.next_state = slowFunc();
         }
-        if (next_state == VARIABLE)
+        if (io_data.next_state == VARIABLE)
         {
             // ESP_LOGW(TAG, "VAR");
-            next_state = varFunc();
+            io_data.next_state = varFunc();
         }
-        // printf("Hola: %d", curr_state);
         vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 }
 
 void output(void)
 {
-    bool msg = false;
-    uint8_t state = OFF;
     char buffer[50];
 
-    xQueueReset(q_st);
-    xQueueReset(q_pb);
-
-    while (1)
+    ESP_LOGI(TAG, "STATE CHANGE");
+    if (io_data.change == true)
     {
-        xQueueReceive(q_pb, (void *)&msg, 0);
-
-        if (msg == true)
+        io_data.change == false;
+        if (io_data.curr_state == OFF)
         {
-            xQueueReceive(q_st, (void *)&state, 0);
-            ESP_LOGI(TAG, "STATE CHANGE");
-            msg = false;
-            if (state == OFF)
-            {
-                sprintf(buffer, "Cambiando al estado: %s\n", "MEDIUM");
-            }
-            else if (state == SLOW)
-            {
-                sprintf(buffer, "Cambiando al estado: %s\n", "VARIABLE");
-            }
-            else if (state == MEDIUM)
-            {
-                sprintf(buffer, "Cambiando al estado: %s\n", "FAST");
-            }
-            else if (state == FAST)
-            {
-                sprintf(buffer, "Cambiando al estado: %s\n", "SLOW");
-            }
-            else if (state == VARIABLE)
-            {
-                sprintf(buffer, "Cambiando al estado: %s\n", "OFF");
-            }
-            printf(buffer);
+            sprintf(buffer, "Cambiando al estado: %s\n", "OFF");
         }
-        vTaskDelay(10 / portTICK_PERIOD_MS);
+        else if (io_data.curr_state == SLOW)
+        {
+            sprintf(buffer, "Cambiando al estado: %s\n", "SLOW");
+        }
+        else if (io_data.curr_state == MEDIUM)
+        {
+            sprintf(buffer, "Cambiando al estado: %s\n", "MEDIUM");
+        }
+        else if (io_data.curr_state == FAST)
+        {
+            sprintf(buffer, "Cambiando al estado: %s\n", "FAST");
+        }
+        else if (io_data.curr_state == VARIABLE)
+        {
+            sprintf(buffer, "Cambiando al estado: %s\n", "VARIABLE");
+        }
     }
+    printf(buffer);
 }
 
 void led(void)
 {
-
     uint16_t var_time = 100;
+    bool toggle;
 
     while (1)
     {
+        // xQueueReceive(q_tim, (void *)&toggle, 5);
+
         if (curr_state == OFF)
         {
-            gpio_set_level(LED_PIN, 1);
-            vTaskDelay(10 / portTICK_PERIOD_MS);
+            gpio_set_level(LED_PIN, 0);
         }
         else if (curr_state == MEDIUM)
         {
-            gpio_set_level(LED_PIN, (gpio_get_level(LED_PIN) == 1 ? 0 : 1));
-            vTaskDelay(500 / portTICK_PERIOD_MS);
+            gpio_set_level(LED_PIN, timer_toggle[1]);
         }
         else if (curr_state == FAST)
         {
-            gpio_set_level(LED_PIN, (gpio_get_level(LED_PIN) == 1 ? 0 : 1));
-            vTaskDelay(100 / portTICK_PERIOD_MS);
+            gpio_set_level(LED_PIN, timer_toggle[0]);
         }
         else if (curr_state == SLOW)
         {
-            gpio_set_level(LED_PIN, (gpio_get_level(LED_PIN) == 1 ? 0 : 1));
-            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            gpio_set_level(LED_PIN, timer_toggle[2]);
         }
         else if (curr_state == VARIABLE)
         {
-            gpio_set_level(LED_PIN, (gpio_get_level(LED_PIN) == 1 ? 0 : 1));
-            vTaskDelay(var_time / portTICK_PERIOD_MS);
+            gpio_set_level(LED_PIN, timer_toggle[3]);
 
             if (var_time < 1000)
             {
@@ -466,11 +473,12 @@ void led(void)
                 var_time = 100;
             }
         }
-        else {
+        else
+        {
             gpio_set_level(LED_PIN, 0);
-            vTaskDelay(2500/portTICK_PERIOD_MS);
+            vTaskDelay(2500 / portTICK_PERIOD_MS);
             gpio_set_level(LED_PIN, 1);
-            vTaskDelay(2500/portTICK_PERIOD_MS);
+            vTaskDelay(2500 / portTICK_PERIOD_MS);
         }
     }
 }
@@ -485,15 +493,6 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    ESP_ERROR_CHECK(esp_netif_init());
-
-    wifi_init();
-    vTaskDelay(5000 / portTICK_PERIOD_MS);
-    // chequear esto
-    mqtt5_app_start();
-    vTaskDelay(5000 / portTICK_PERIOD_MS);
-
     esp_task_wdt_config_t config = {
         .timeout_ms = 60000,
         .trigger_panic = true,
@@ -501,33 +500,44 @@ void app_main(void)
     };
     esp_err_t err = esp_task_wdt_reconfigure(&config);
 
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    ESP_ERROR_CHECK(esp_netif_init());
+
     gpio_config_t pin_conf = {};
-    //disable interrupt
-    pin_conf.intr_type = GPIO_INTR_DISABLE;
-    //set as output mode
-    pin_conf.mode = GPIO_MODE_OUTPUT;
-    //bit mask of the pins that you want to set,e.g.GPIO18/19
-    pin_conf.pin_bit_mask = GPIO_OUTPUT_PIN_SEL;
-    //disable pull-down mode
-    pin_conf.pull_down_en = 0;
-    //disable pull-up mode
-    pin_conf.pull_up_en = 0;
-    //configure GPIO with the given settings
-    gpio_config(&pin_conf);
+    pin_conf.intr_type = GPIO_INTR_DISABLE;      // disable interrupt
+    pin_conf.mode = GPIO_MODE_OUTPUT;            // set as output mode
+    pin_conf.pin_bit_mask = GPIO_OUTPUT_PIN_SEL; //  Bit Mask
+    pin_conf.pull_down_en = 0;                   // disable pull-down mode
+    pin_conf.pull_up_en = 0;                     // disable pull-up mode
+    gpio_config(&pin_conf);                      // configure GPIO with the given settings
 
     gpio_set_level(LED_PIN, 0);
-    vTaskDelay(1000/portTICK_PERIOD_MS);
-    gpio_set_level(LED_PIN, 1);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    gpio_set_level(LED_PIN, !gpio_get_level(LED_PIN));
+
+    wifi_init();
+    vTaskDelay(5000 / portTICK_PERIOD_MS);
+    // chequear esto
+    mqtt5_app_start();
+    vTaskDelay(5000 / portTICK_PERIOD_MS);
 
     while (mqtt_connected == false)
     {
         vTaskDelay(500 / portTICK_PERIOD_MS);
     }
 
-    q_pb = xQueueCreate(q_pb_length, sizeof(bool));
-    q_st = xQueueCreate(q_st_length, sizeof(uint8_t));
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    xTaskCreate(input, "Entrada", 4096, NULL, 1, NULL);
-    xTaskCreate(output, "Salida", 4096, NULL, 1, NULL);
-    xTaskCreate(led, "LED", 2048, NULL, 1, NULL);
+    xTaskCreate(&input, "Entrada", 10240, NULL, 1, NULL);
+    xTaskCreate(&output, "Salida", 10240, NULL, 1, NULL);
+    //xTaskCreate(&led, "LED", 10240, NULL, 2, NULL);
+
+    tim_100ms = xTimerCreate("Timer100", 100 / portTICK_PERIOD_MS, pdTRUE, (void *)0, &TimerCallBack);
+
+    if (tim_100ms == NULL)
+    {
+        ESP_LOGE(TAG, "ERROR TIMER");
+    }
+    else
+    {
+        xTimerStart(tim_100ms, 0);
+    }
 }
